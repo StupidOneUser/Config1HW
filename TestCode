@@ -1,0 +1,109 @@
+import unittest
+from io import StringIO
+import sys
+
+class TestShellEmulator(unittest.TestCase):
+
+    def setUp(self):
+        # Подготовка эмулятора для тестирования
+        self.emulator = ShellEmulator('config.csv')
+        self.emulator.current_dir = '/'  # Устанавливаем корневую директорию
+
+    def test_ls_valid_directory(self):
+        # Проверяем команду ls для существующей директории
+        self.emulator.fs['/dir1'] = {'type': 'dir', 'content': '', 'owner': 'root'}
+        self.emulator.fs['/dir2'] = {'type': 'dir', 'content': '', 'owner': 'root'}
+        
+        # Выполняем команду ls
+        with self.capture_output() as output:
+            self.emulator.ls(['/'])  # Выводим содержимое корневой директории
+        result = output.getvalue().strip()
+        self.assertEqual(result, 'dir1\ndir2')  # Проверяем вывод
+
+    def test_ls_invalid_directory(self):
+        # Проверка ошибки при попытке выполнить ls для несуществующей директории
+        with self.capture_output() as output:
+            self.emulator.ls(['/invalid_dir'])
+        result = output.getvalue().strip()
+        self.assertEqual(result, "ls: cannot access '/invalid_dir': No such directory")  # Ожидаем ошибку
+
+    def test_cd_valid_directory(self):
+        # Проверяем команду cd для корректного пути
+        self.emulator.fs['/dir1'] = {'type': 'dir', 'content': '', 'owner': 'root'}
+        self.emulator.cd(['dir1'])  # Переход в директорию /dir1
+        self.assertEqual(self.emulator.current_dir, '/dir1')  # Проверяем, что текущая директория изменилась
+
+    def test_cd_invalid_directory(self):
+        # Проверка ошибки при попытке cd в несуществующую директорию
+        with self.capture_output() as output:
+            self.emulator.cd(['invalid_dir'])
+        result = output.getvalue().strip()
+        self.assertEqual(result, "cd: invalid_dir: No such directory")  # Ожидаем ошибку
+
+    def test_cat_valid_file(self):
+        # Проверка команды cat для существующего файла
+        self.emulator.fs['/file1.txt'] = {'type': 'file', 'content': 'Hello, world!', 'owner': 'root'}
+        with self.capture_output() as output:
+            self.emulator.cat(['file1.txt'])
+        result = output.getvalue().strip()
+        self.assertEqual(result, 'Hello, world!')  # Проверяем содержимое файла
+
+    def test_cat_invalid_file(self):
+        # Проверка ошибки при попытке cat для несуществующего файла
+        with self.capture_output() as output:
+            self.emulator.cat(['invalid_file.txt'])
+        result = output.getvalue().strip()
+        self.assertEqual(result, "cat: invalid_file.txt: No such file")  # Ожидаем ошибку
+
+    def test_chown_valid(self):
+        # Проверка команды chown для изменения владельца файла
+        self.emulator.fs['/file1.txt'] = {'type': 'file', 'content': 'Some content', 'owner': 'root'}
+        self.emulator.chown(['new_owner', '/file1.txt'])  # Изменяем владельца
+        self.assertEqual(self.emulator.fs['/file1.txt']['owner'], 'new_owner')  # Проверяем, что владелец изменился
+
+    def test_chown_invalid(self):
+        # Проверка ошибки при попытке изменить владельца несуществующего файла
+        with self.capture_output() as output:
+            self.emulator.chown(['new_owner', '/invalid_file.txt'])
+        result = output.getvalue().strip()
+        self.assertEqual(result, "chown: /invalid_file.txt: No such file or directory")  # Ожидаем ошибку
+
+    def test_resolve_path_absolute(self):
+        # Проверка корректности разрешения абсолютных путей
+        path = self.emulator.resolve_path('/home/user')
+        self.assertEqual(path, '/home/user')  # Абсолютный путь должен остаться без изменений
+
+    def test_resolve_path_relative(self):
+        # Проверка корректности разрешения относительных путей
+        self.emulator.current_dir = '/home/user'
+        path = self.emulator.resolve_path('documents/file.txt')
+        self.assertEqual(path, '/home/user/documents/file.txt')  # Путь должен быть приведен к абсолютному
+
+    def test_run_startup_script(self):
+        # Проверка выполнения команд из стартового скрипта
+        # Для теста будем использовать временные команды
+        self.emulator.startup_script = 'test_startup_script.sh'
+        with open(self.emulator.startup_script, 'w') as script:
+            script.write("ls /\n")  # Команда для выполнения в скрипте
+
+        with self.capture_output() as output:
+            self.emulator.run_startup_script()  # Выполняем скрипт
+        result = output.getvalue().strip()
+        self.assertIn('dir1', result)  # Проверка, что вывод соответствует ожиданиям (команда ls выведет dir1)
+
+    # Вспомогательная функция для перехвата вывода
+    from contextlib import contextmanager
+    @contextmanager
+    def capture_output(self):
+        new_out = StringIO()
+        new_err = StringIO()
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = new_out, new_err
+        try:
+            yield new_out
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+
+
+if __name__ == '__main__':
+    unittest.main()
