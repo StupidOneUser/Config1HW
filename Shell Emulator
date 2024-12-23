@@ -1,0 +1,114 @@
+import os
+import tarfile
+import csv
+
+class ShellEmulator:
+    def __init__(self, config_file):
+        self.load_config(config_file)
+        self.current_dir = '/'
+        self.fs = {}
+        self.load_filesystem()
+
+    def load_config(self, config_file):
+        with open(config_file, 'r') as file:
+            reader = csv.DictReader(file)
+            config = next(reader)
+        self.hostname = config['Имя компьютера']
+        self.fs_path = config['Путь к архиву виртуальной файловой системы']
+        self.startup_script = config['Путь к стартовому скрипту']
+
+    def load_filesystem(self):
+        with tarfile.open(self.fs_path, 'r') as tar:
+            for member in tar.getmembers():
+                self.fs[member.name] = {
+                    'type': 'dir' if member.isdir() else 'file',
+                    'content': tar.extractfile(member).read().decode() if member.isfile() else '',
+                    'owner': 'root'
+                }
+
+    def execute_command(self, command):
+        parts = command.strip().split()
+        if not parts:
+            return
+
+        cmd = parts[0]
+        args = parts[1:]
+
+        if cmd == 'ls':
+            self.ls(args)
+        elif cmd == 'cd':
+            self.cd(args)
+        elif cmd == 'cat':
+            self.cat(args)
+        elif cmd == 'chown':
+            self.chown(args)
+        elif cmd == 'exit':
+            exit(0)
+        else:
+            print(f"Unknown command: {cmd}")
+
+    def ls(self, args):
+        path = self.resolve_path(args[0] if args else self.current_dir)
+        if path not in self.fs or self.fs[path]['type'] != 'dir':
+            print(f"ls: cannot access '{path}': No such directory")
+            return
+
+        for name in sorted(self.fs.keys()):
+            if name.startswith(path) and name != path:
+                print(os.path.basename(name))
+
+    def cd(self, args):
+        if not args:
+            print("cd: missing operand")
+            return
+
+        path = self.resolve_path(args[0])
+        if path not in self.fs or self.fs[path]['type'] != 'dir':
+            print(f"cd: {args[0]}: No such directory")
+            return
+
+        self.current_dir = path
+
+    def cat(self, args):
+        if not args:
+            print("cat: missing file operand")
+            return
+
+        path = self.resolve_path(args[0])
+        if path not in self.fs or self.fs[path]['type'] != 'file':
+            print(f"cat: {args[0]}: No such file")
+            return
+
+        print(self.fs[path]['content'])
+
+    def chown(self, args):
+        if len(args) < 2:
+            print("chown: missing operand")
+            return
+
+        owner, path = args[0], self.resolve_path(args[1])
+        if path not in self.fs:
+            print(f"chown: {args[1]}: No such file or directory")
+            return
+
+        self.fs[path]['owner'] = owner
+
+    def resolve_path(self, path):
+        if path.startswith('/'):
+            return path.rstrip('/')
+        return os.path.normpath(f"{self.current_dir}/{path}").rstrip('/')
+
+    def run_startup_script(self):
+        with open(self.startup_script, 'r') as script:
+            for line in script:
+                self.execute_command(line.strip())
+
+    def start(self):
+        self.run_startup_script()
+        while True:
+            command = input(f"{self.hostname}:{self.current_dir}$ ")
+            self.execute_command(command)
+
+if __name__ == "__main__":
+    emulator = ShellEmulator('config.csv')
+    emulator.start()
